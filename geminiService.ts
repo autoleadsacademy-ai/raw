@@ -1,73 +1,74 @@
 
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { ProductData, SceneManifest, AngleResult } from "./types";
 
-// Always use the API key directly from process.env.API_KEY as a named parameter
+// Always create a fresh instance to use the most up-to-date API key
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
- * Generates an image using one or more reference images.
- * Hard-forced to 9:16 for TikTok/Shorts compatibility.
+ * Generates an image with Optimal Resolution (2K) and Dynamic Aspect Ratio.
+ * Uses gemini-3-pro-image-preview for high-fidelity pixels.
  */
-export const generateSceneImage = async (base64References: string | string[], prompt: string) => {
+export const generateSceneImage = async (base64References: string | string[], prompt: string, ratio: string = "9:16") => {
   const ai = getAI();
   const refs = Array.isArray(base64References) ? base64References : [base64References];
   
-  const parts: any[] = refs.map((ref, index) => ({
+  const parts: any[] = refs.map(ref => ({
     inlineData: {
       mimeType: 'image/png',
       data: ref.includes(',') ? ref.split(',')[1] : ref
     }
   }));
 
-  // Strengthened consistency prompt with explicit vertical orientation
-  const consistencyInstruction = `
-    INSTRUCTIONS FOR IDENTITY LOCK & COMPOSITION:
-    1. Replicate the EXACT facial features and identity of the person in the reference.
-    2. Replicate the EXACT product design and branding from the reference.
-    3. COMPOSITION: Use a professional vertical 9:16 portrait composition suitable for TikTok.
-    4. NO TEXT: Do not add any generated text or gibberish.
-    5. QUALITY: High-fidelity, cinematic UGC style.
+  const systemPrompt = `
+    TASK: Generate a high-resolution 2K image for professional UGC.
+    STRICT IDENTITY LOCK:
+    - Replicate the EXACT face and characteristics from the first reference image.
+    - If a second image is provided, use its environment/background.
+    - Maintain consistent lighting and atmosphere.
+    QUALITY: Extremely sharp textures, cinematic realism, no AI artifacts.
+    ASPECT RATIO: ${ratio}.
+    [PROHIBITED]: No text, no captions, no watermarks, no overlays.
   `;
 
-  parts.push({ text: prompt + consistencyInstruction });
+  parts.push({ text: `${prompt}\n${systemPrompt}` });
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: parts
-    },
-    config: {
-      // Hard-force 9:16 Aspect Ratio
-      imageConfig: {
-        aspectRatio: "9:16"
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-image-preview',
+      contents: { parts },
+      config: {
+        imageConfig: { 
+          aspectRatio: ratio as any,
+          imageSize: "2K" 
+        }
       }
+    });
+    
+    const imagePart = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
+    return imagePart ? imagePart.inlineData.data : null;
+  } catch (error: any) {
+    if (error.message?.includes("Requested entity was not found")) {
+      throw new Error("API_KEY_NOT_FOUND");
     }
-  });
-  
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) return part.inlineData.data;
+    throw error;
   }
-  return null;
 };
 
+/**
+ * Generates a Scene Manifest with a high-fidelity VO script.
+ */
 export const generateSceneManifest = async (base64Reference: string, context: string, product: ProductData): Promise<SceneManifest | null> => {
   const ai = getAI();
   const prompt = `
-    Generate professional video scene manifest JSON for a TikTok UGC video.
-    SCENE CONTEXT: ${context}
-    PRODUCT: ${product.name} (${product.type})
-    GENDER: ${product.gender}
-
-    STRICT JSON SCHEMA:
-    {
-      "scene_id": number,
-      "role_in_video": string,
-      "visual_locking": { "character": "Locked", "background": "Locked", "identity_mapping": "Reference Image" },
-      "voice_over": { "script": "Clean script max 22 words", "gender": "${product.gender}", "vocal_profile": "Natural", "word_count_check": "OK" },
-      "motion_engine": { "profile": "Microtic", "parameters": ["blinking", "head_tilt"] },
-      "timing": "8 seconds"
-    }
+    Generate a professional TikTok UGC Scene Manifest JSON for "${product.name}" (${product.type}).
+    Scene Context: ${context}
+    Target Gender: ${product.gender}
+    
+    REQUIREMENTS:
+    - voice_over.script: CLEAN text only, max 20 words.
+    - voice_over.vocal_profile: High fidelity natural human.
+    - motion_engine.profile: Microtic-Realism (blinking, subtle tilts).
   `;
 
   const response = await ai.models.generateContent({
@@ -78,7 +79,9 @@ export const generateSceneManifest = async (base64Reference: string, context: st
         { text: prompt }
       ]
     },
-    config: { responseMimeType: "application/json" }
+    config: { 
+      responseMimeType: "application/json"
+    }
   });
 
   try {
@@ -88,24 +91,27 @@ export const generateSceneManifest = async (base64Reference: string, context: st
   }
 };
 
-export const generateViralAngles = async (inputs: { product: string; target: string; benefit: string; gender: string }, imageBase64?: string): Promise<AngleResult[]> => {
+/**
+ * Generates Viral Angles for a product.
+ */
+export const generateViralAngles = async (inputs: { product: string; target: string; benefit: string; gender: string }): Promise<AngleResult[]> => {
   const ai = getAI();
   const prompt = `
-    Role: Viral TikTok Affiliate Strategist.
-    Task: Create 5-7 high-conversion content angles for ${inputs.product}.
-    Target: ${inputs.target}. Benefit: ${inputs.benefit}.
-    Output: JSON array of Angle objects.
+    Create 5 high-conversion TikTok viral angles for "${inputs.product}".
+    Target Audience: ${inputs.target}
+    Key Benefit: ${inputs.benefit}
+    Gender: ${inputs.gender}
+    
+    Output JSON array of objects with fields: angle_number, angle_name, emotion, hook_text, image_prompt, video_json.
+    Strictly follow TikTok's psychological hook principles.
   `;
-
-  const parts: any[] = [{ text: prompt }];
-  if (imageBase64) {
-    parts.push({ inlineData: { mimeType: 'image/png', data: imageBase64.split(',')[1] } });
-  }
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: { parts },
-    config: { responseMimeType: "application/json" }
+    contents: { parts: [{ text: prompt }] },
+    config: { 
+      responseMimeType: "application/json"
+    }
   });
 
   try {
@@ -115,6 +121,9 @@ export const generateViralAngles = async (inputs: { product: string; target: str
   }
 };
 
+/**
+ * Synthesizes voice using Gemini's TTS.
+ */
 export const generateVoice = async (text: string, voiceName: string): Promise<string | null> => {
   const ai = getAI();
   const response = await ai.models.generateContent({
