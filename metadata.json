@@ -1,0 +1,8 @@
+{
+  "name": "Raw Engine - TikTok Affiliate Generator",
+  "description": "A world-class AI-powered engine designed for TikTok affiliates to generate consistent video scenes, conversion-optimized hooks, and high-fidelity vocal narrations using Gemini models.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
